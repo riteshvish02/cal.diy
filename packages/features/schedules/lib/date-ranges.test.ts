@@ -1,7 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-
 import dayjs from "@calcom/dayjs";
-
+import { describe, expect, it, vi } from "vitest";
 import {
   buildDateRanges,
   intersect,
@@ -11,8 +9,9 @@ import {
 } from "./date-ranges";
 
 describe("processWorkingHours", () => {
-  // TEMPORAIRLY SKIPPING THIS TEST - Started failing after 29th Oct
-  it.skip("should return the correct working hours given a specific availability, timezone, and date range", () => {
+  it("should return the correct working hours given a specific availability, timezone, and date range in summer (EDT)", () => {
+    vi.useFakeTimers().setSystemTime(new Date("2023-06-12T12:00:00.000Z"));
+
     const item = {
       days: [1, 2, 3, 4, 5], // Monday to Friday
       startTime: new Date(Date.UTC(2023, 5, 12, 8, 0)), // 8 AM
@@ -35,6 +34,37 @@ describe("processWorkingHours", () => {
       start: dayjs(`${dateTo.tz(timeZone).format("YYYY-MM-DD")}T12:00:00Z`).tz(timeZone),
       end: dayjs(`${dateTo.tz(timeZone).format("YYYY-MM-DD")}T21:00:00Z`).tz(timeZone),
     });
+
+    vi.useRealTimers();
+  });
+
+  it("should return the correct working hours given a specific availability, timezone, and date range in winter (EST)", () => {
+    vi.useFakeTimers().setSystemTime(new Date("2023-11-15T12:00:00.000Z"));
+
+    const item = {
+      days: [1, 2, 3, 4, 5], // Monday to Friday
+      startTime: new Date(Date.UTC(2023, 5, 12, 8, 0)), // 8 AM
+      endTime: new Date(Date.UTC(2023, 5, 12, 17, 0)), // 5 PM
+    };
+
+    const timeZone = "America/New_York";
+    const dateFrom = dayjs.utc().startOf("day").day(2).add(1, "week");
+    const dateTo = dayjs.utc().endOf("day").day(3).add(1, "week");
+
+    const indexedResults = processWorkingHours({}, { item, timeZone, dateFrom, dateTo, travelSchedules: [] });
+    const results = Object.values(indexedResults);
+    expect(results.length).toBe(2);
+    // In EST (UTC-5), 8 AM EDT shifts to 13:00 UTC and 5 PM shifts to 22:00 UTC
+    expect(results[0]).toEqual({
+      start: dayjs(`${dateFrom.tz(timeZone).add(1, "day").format("YYYY-MM-DD")}T13:00:00Z`).tz(timeZone),
+      end: dayjs(`${dateFrom.tz(timeZone).add(1, "day").format("YYYY-MM-DD")}T22:00:00Z`).tz(timeZone),
+    });
+    expect(results[1]).toEqual({
+      start: dayjs(`${dateTo.tz(timeZone).format("YYYY-MM-DD")}T13:00:00Z`).tz(timeZone),
+      end: dayjs(`${dateTo.tz(timeZone).format("YYYY-MM-DD")}T22:00:00Z`).tz(timeZone),
+    });
+
+    vi.useRealTimers();
   });
   it("should have availability on last day of month in the month were DST starts", () => {
     const item = {
@@ -158,15 +188,16 @@ describe("processWorkingHours", () => {
     vi.useRealTimers();
   });
 
-  // TEMPORAIRLY SKIPPING THIS TEST - Started failing after 29th Oct
-  it.skip("should return the correct working hours in the month were DST ends", () => {
+  it("should return the correct working hours in the month where DST ends", () => {
+    vi.useFakeTimers().setSystemTime(new Date("2023-10-15T12:00:00.000Z"));
+
     const item = {
       days: [0, 1, 2, 3, 4, 5, 6], // Monday to Sunday
       startTime: new Date(Date.UTC(2023, 5, 12, 8, 0)), // 8 AM
       endTime: new Date(Date.UTC(2023, 5, 12, 17, 0)), // 5 PM
     };
 
-    // in America/New_York DST ends on first Sunday of November
+    // in America/New_York DST ends on first Sunday of November (Nov 5, 2023)
     const timeZone = "America/New_York";
 
     let firstSundayOfNovember = dayjs().startOf("day").month(10).date(1);
@@ -181,15 +212,19 @@ describe("processWorkingHours", () => {
       processWorkingHours({}, { item, timeZone, dateFrom, dateTo, travelSchedules: [] })
     );
 
-    const allDSTStartAt12 = results
-      .filter((res) => res.start.isBefore(firstSundayOfNovember))
-      .every((result) => result.start.utc().hour() === 12);
-    const allNotDSTStartAt13 = results
-      .filter((res) => res.start.isAfter(firstSundayOfNovember))
-      .every((result) => result.start.utc().hour() === 13);
+    const beforeDSTResults = results.filter((res) => res.start.isBefore(firstSundayOfNovember));
+    const afterDSTResults = results.filter((res) => res.start.isAfter(firstSundayOfNovember));
+
+    expect(beforeDSTResults.length).toBeGreaterThan(0);
+    expect(afterDSTResults.length).toBeGreaterThan(0);
+
+    const allDSTStartAt12 = beforeDSTResults.every((result) => result.start.utc().hour() === 12);
+    const allNotDSTStartAt13 = afterDSTResults.every((result) => result.start.utc().hour() === 13);
 
     expect(allDSTStartAt12).toBeTruthy();
     expect(allNotDSTStartAt13).toBeTruthy();
+
+    vi.useRealTimers();
   });
 
   it("should skip event if it ends before it starts (different days)", () => {
